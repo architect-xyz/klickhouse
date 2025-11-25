@@ -812,6 +812,7 @@ dependencies = [
  "klickhouse_derive",
  "log",
  "lz4",
+ "num-traits",
  "paste",
  "refinery-core",
  "rust_decimal",
