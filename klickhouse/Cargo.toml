@@ -55,6 +55,7 @@ rustls-pki-types = { version = "1.14", optional = true }
 paste = "1.0"
 geo-types = { version = "0.7", optional = true }
 half = { version = "2.7", optional = true }
+num-traits = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1.50", features = ["rt-multi-thread"] }

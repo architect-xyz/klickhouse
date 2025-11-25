@@ -1,5 +1,5 @@
 #![cfg(feature = "rust_decimal")]
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, prelude::FromPrimitive};
 
 #[derive(klickhouse::Row, Debug, Default, PartialEq, Clone)]
 pub struct TestType {
@@ -21,19 +21,23 @@ async fn test_client() {
         d_d128: Decimal::new(12345, 2),
     };
 
+    let block2 = TestType {
+        d_d128: Decimal::from_f64(0.05).unwrap(),
+    };
+
     client
         .insert_native_block(
             "INSERT INTO test_decimal (d_d128) FORMAT Native",
-            vec![block.clone()],
+            vec![block.clone(), block2.clone()],
         )
         .await
         .unwrap();
 
-    let block2 = client
-        .query_one("SELECT * from test_decimal")
+    let answer_block = client
+        .query_collect("SELECT * from test_decimal ORDER BY d_d128 DESC")
         .await
         .unwrap();
-    assert_eq!(block, block2);
+    assert_eq!(vec![block, block2], answer_block);
 
     println!("done");
 }

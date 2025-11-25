@@ -543,3 +543,59 @@ async fn roundtrip_geo() {
         &roundtrip(multipolygon.clone(), &Type::MultiPolygon)
     );
 }
+
+#[cfg(feature = "rust_decimal")]
+mod decimal_tests {
+    use super::*;
+    use rust_decimal::{Decimal, prelude::FromPrimitive};
+    #[test]
+    fn with_type_hint() {
+        let input = Decimal::from_f64(0.05).unwrap();
+        assert_eq!(
+            input.to_sql(Some(&Type::Decimal64(10))).unwrap(),
+            Value::Decimal64(10, 500000000)
+        );
+    }
+
+    #[test]
+    fn no_type_hint() {
+        let input = Decimal::from_f64(0.05).unwrap();
+        assert_eq!(input.to_sql(None).unwrap(), Value::Decimal32(2, 5));
+    }
+
+    #[test]
+    fn negative_decimals() {
+        let input = Decimal::from_f64(-0.05).unwrap();
+        assert_eq!(input.to_sql(None).unwrap(), Value::Decimal32(2, -5));
+    }
+
+    #[test]
+    fn large_decimals() {
+        let input = Decimal::from_f64(1000.1234).unwrap();
+        assert_eq!(input.to_sql(None).unwrap(), Value::Decimal32(4, 10001234));
+    }
+
+    #[test]
+    fn large_negative_decimals() {
+        let input = Decimal::from_f64(-1000.1234).unwrap();
+        assert_eq!(input.to_sql(None).unwrap(), Value::Decimal32(4, -10001234));
+    }
+
+    #[test]
+    fn generating_query() {
+        let query = crate::QueryBuilder::new(
+            "INSERT INTO example (amount) VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .arg(Decimal::from_f64(0.05).unwrap())
+        .arg(Decimal::from_f64(-0.05).unwrap())
+        .arg(Decimal::from_i64(1000).unwrap())
+        .arg(Decimal::from_f64(1000.1234).unwrap())
+        .arg(Decimal::from_f64(-1000.1234).unwrap())
+        .arg(Decimal::ZERO);
+
+        assert_eq!(
+            query.finalize().unwrap().0,
+            "INSERT INTO example (amount) VALUES (0.05, -0.05, 1000, 1000.1234, -1000.1234, 0)"
+        );
+    }
+}

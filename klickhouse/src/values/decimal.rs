@@ -61,7 +61,37 @@ impl ToSql for Decimal {
         let scale = self.scale();
         let mantissa = self.mantissa();
         match type_hint {
-            None => Ok(Value::Decimal128(scale as usize, mantissa)),
+            None => {
+                // Decimal32: 1-9, Decimal64: 10-18, Decimal128: 19-38
+                if scale <= 9 {
+                    let precision = scale.max(1);
+                    Ok(Value::Decimal32(
+                        precision as usize,
+                        mantissa_to_scale(mantissa, scale, precision)?
+                            .try_into()
+                            .map_err(|_| out_of_range("Decimal32"))?,
+                    ))
+                } else if scale <= 18 {
+                    Ok(Value::Decimal64(
+                        scale as usize,
+                        mantissa_to_scale(mantissa, scale, scale)?
+                            .try_into()
+                            .map_err(|_| out_of_range("Decimal64"))?,
+                    ))
+                } else if scale <= 38 {
+                    Ok(Value::Decimal128(
+                        scale as usize,
+                        mantissa_to_scale(mantissa, scale, scale)?
+                            .try_into()
+                            .map_err(|_| out_of_range("Decimal128"))?,
+                    ))
+                } else {
+                    Err(KlickhouseError::SerializeError(format!(
+                        "precision {} exceeds maximum ClickHouse decimal precision of 38",
+                        scale
+                    )))
+                }
+            }
             Some(Type::Decimal32(precision)) if *precision as u32 >= scale => Ok(Value::Decimal32(
                 *precision,
                 mantissa_to_scale(mantissa, scale, *precision as u32)?

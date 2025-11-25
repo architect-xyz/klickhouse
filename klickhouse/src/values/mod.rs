@@ -336,6 +336,29 @@ impl fmt::Debug for Value {
     }
 }
 
+fn decimal_formatter<T>(f: &mut fmt::Formatter<'_>, precision: usize, value: T) -> fmt::Result
+where
+    T: PartialOrd + num_traits::sign::Signed + ToString,
+{
+    let is_negative = value.is_negative();
+    let raw_value = value.abs().to_string();
+    let (pre, fraction) = if raw_value.len() <= precision {
+        let zeros = "0".repeat(precision - raw_value.len());
+        ("0", format!("{zeros}{raw_value}"))
+    } else {
+        let pre = &raw_value[..raw_value.len() - precision];
+        let fraction = &raw_value[raw_value.len() - precision..];
+        (pre, fraction.to_string())
+    };
+    let fraction = fraction.trim_end_matches('0');
+    let sign = if is_negative { "-" } else { "" };
+    if fraction.is_empty() {
+        write!(f, "{sign}{pre}")
+    } else {
+        write!(f, "{sign}{pre}.{fraction}")
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -354,36 +377,9 @@ impl fmt::Display for Value {
             Value::Float32(x) => write!(f, "{x}"),
             Value::Float64(x) => write!(f, "{x}"),
             Value::BFloat16(x) => write!(f, "{x}"),
-            Value::Decimal32(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
-            Value::Decimal64(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
-            Value::Decimal128(precision, value) => {
-                let raw_value = value.to_string();
-                if raw_value.len() < *precision {
-                    write!(f, "{raw_value}")
-                } else {
-                    let pre = &raw_value[..raw_value.len() - precision];
-                    let fraction = &raw_value[raw_value.len() - precision..];
-                    write!(f, "{pre}.{fraction}")
-                }
-            }
+            Value::Decimal32(precision, value) => decimal_formatter(f, *precision, *value),
+            Value::Decimal64(precision, value) => decimal_formatter(f, *precision, *value),
+            Value::Decimal128(precision, value) => decimal_formatter(f, *precision, *value),
             Value::Decimal256(..) => {
                 unimplemented!("Decimal256 display not implemented");
             }
