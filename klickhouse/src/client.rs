@@ -388,10 +388,39 @@ impl Client {
     /// Sends a query string with streaming associated data (i.e. insert) over native protocol.
     /// Once all outgoing blocks are written (EOF of `blocks` stream), then any response blocks from Clickhouse are read and DISCARDED.
     /// Make sure any query you send native data with has a `format native` suffix.
+    ///
+    /// This returns as soon as the final block has been written to the socket, so a
+    /// successful return does not mean the server has accepted the insert. Rows may not
+    /// yet be visible to a subsequent query, and an exception raised by the server after
+    /// the header block is discarded rather than returned. Use
+    /// [`Client::insert_native_confirmed`] when you need the insert to be acknowledged.
     pub async fn insert_native<T: Row + Send + Sync + 'static>(
         &self,
         query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
+        blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+    ) -> Result<()> {
+        self.insert_native_inner(query, blocks, false).await
+    }
+
+    /// Same as [`Client::insert_native`], but waits for the server to finish the insert
+    /// before returning, and returns any exception it reports.
+    ///
+    /// Waiting for end of stream also prevents the server from aborting the insert should
+    /// the connection be dropped or reused immediately afterwards, which matters when
+    /// connections come from a pool.
+    pub async fn insert_native_confirmed<T: Row + Send + Sync + 'static>(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
+        blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+    ) -> Result<()> {
+        self.insert_native_inner(query, blocks, true).await
+    }
+
+    async fn insert_native_inner<T: Row + Send + Sync + 'static>(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
         mut blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+        confirm: bool,
     ) -> Result<()> {
         let (sender, receiver) = oneshot::channel();
         self.sender
@@ -453,11 +482,22 @@ impl Client {
             column_data: IndexMap::new(),
         })
         .await?;
+        if confirm {
+            // The channel closes once the server sends end of stream; an exception
+            // arrives here as an `Err`, so a rejected insert is no longer reported
+            // as a successful one.
+            while let Some(block) = receiver.recv().await {
+                block?;
+            }
+        }
         Ok(())
     }
 
     /// Wrapper over [`Client::insert_native`] to send a single block.
     /// Make sure any query you send native data with has a `format native` suffix.
+    ///
+    /// Inherits the delivery semantics of [`Client::insert_native`]: the insert is not
+    /// acknowledged. See [`Client::insert_native_block_confirmed`].
     pub async fn insert_native_block<T: Row + Send + Sync + 'static>(
         &self,
         query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
@@ -466,6 +506,18 @@ impl Client {
         let blocks = Box::pin(async move { blocks });
         let stream = futures_util::stream::once(blocks);
         self.insert_native(query, stream).await
+    }
+
+    /// Wrapper over [`Client::insert_native_confirmed`] to send a single block.
+    /// Make sure any query you send native data with has a `format native` suffix.
+    pub async fn insert_native_block_confirmed<T: Row + Send + Sync + 'static>(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
+        blocks: Vec<T>,
+    ) -> Result<()> {
+        let blocks = Box::pin(async move { blocks });
+        let stream = futures_util::stream::once(blocks);
+        self.insert_native_confirmed(query, stream).await
     }
 
     /// Runs a query against Clickhouse, returning a stream of deserialized rows.
