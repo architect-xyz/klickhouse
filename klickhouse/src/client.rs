@@ -387,12 +387,37 @@ impl Client {
 
     /// Sends a query string with streaming associated data (i.e. insert) over native protocol.
     /// Once all outgoing blocks are written (EOF of `blocks` stream), then any response blocks from Clickhouse are read and DISCARDED.
+    /// Waits until the server finishes the insert, returning any exception it raises.
     /// Make sure any query you send native data with has a `format native` suffix.
     pub async fn insert_native<T: Row + Send + Sync + 'static>(
         &self,
         query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
-        mut blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+        blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
     ) -> Result<()> {
+        let mut stream = self.send_insert_native(query, blocks).await?;
+        while let Some(next) = stream.next().await {
+            next?;
+        }
+        Ok(())
+    }
+
+    /// Same as `insert_native`, but doesn't wait for a server response after the final block is written.
+    /// Server exceptions are discarded, and the insert could get aborted if the connection is closed quickly.
+    pub async fn insert_native_now<T: Row + Send + Sync + 'static>(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
+        blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+    ) -> Result<()> {
+        let _ = self.send_insert_native(query, blocks).await?;
+        Ok(())
+    }
+
+    /// Writes the query and all outgoing blocks, returning the remaining response blocks from Clickhouse.
+    async fn send_insert_native<T: Row + Send + Sync + 'static>(
+        &self,
+        query: impl TryInto<ParsedQuery, Error = KlickhouseError>,
+        mut blocks: impl Stream<Item = Vec<T>> + Send + Sync + Unpin + 'static,
+    ) -> Result<impl Stream<Item = Result<Block>>> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .send(ClientRequest {
@@ -453,7 +478,7 @@ impl Client {
             column_data: IndexMap::new(),
         })
         .await?;
-        Ok(())
+        Ok(ReceiverStream::new(receiver))
     }
 
     /// Wrapper over [`Client::insert_native`] to send a single block.
